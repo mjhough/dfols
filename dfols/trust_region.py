@@ -106,7 +106,6 @@ def bbtrsbox(xopt, g, H, sl, su, P, delta, use_fortran=USE_FORTRAN):
     proj = lambda w: dykstra(P,w,max_iter=1000,tol=1.0e-20)
 
     MAX_LOOP_ITERS = 100 * n ** 2
-    MAX_BT_ITERS = 100
 
     # projected GD loop 
     for ii in range(MAX_LOOP_ITERS):

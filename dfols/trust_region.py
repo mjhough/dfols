@@ -63,13 +63,80 @@ except ImportError:
     # Fall back to Python implementation
     USE_FORTRAN = False
 
+from .util import dykstra, model_value, pball, pbox, sumsq
 
-from .util import sumsq
-
-
-__all__ = ['trsbox', 'trsbox_geometry']
+__all__ = ['bbtrsbox', 'bbtrsbox_geometry', 'trsbox', 'trsbox_geometry']
 
 ZERO_THRESH = 1e-14
+
+
+def bbtrsbox(xopt, g, H, sl, su, P, delta, use_fortran=USE_FORTRAN):
+    n = xopt.size
+    assert xopt.shape == (n,), "xopt has wrong shape (should be vector)"
+    assert g.shape == (n,), "g and xopt have incompatible sizes"
+    assert len(H.shape) == 2, "H must be a matrix"
+    assert H.shape == (n,n), "H and xopt have incompatible sizes"
+    assert np.allclose(H, H.T), "H must be symmetric"
+    assert sl.shape == (n,), "sl and xopt have incompatible sizes"
+    assert su.shape == (n,), "su and xopt have incompatible sizes"
+    assert np.all(sl <= xopt), "xopt violates lower bound sl"
+    assert np.all(xopt <= su), "xopt violates upper bound su"
+    assert delta > 0.0, "delta must be strictly positive"
+
+    d = np.zeros((n,))
+    gnew = g.copy()
+    gy = g.copy()
+    crvmin = -1.0
+    y = d.copy()
+    t = 1
+
+    # Initial guess of L with matrix 2-norm
+    L = np.linalg.norm(H, 2)
+
+    # trust region is a ball of radius delta around the starting point of
+    # d.
+    trproj = lambda w: pball(w, np.zeros((n,)), delta)
+
+    # the bound constraints create a box around xopt+d
+    # with upper bound su and lower bound sl
+    bproj = lambda w: pbox(w, sl-xopt, su-xopt)
+
+    # combine trust region constraints with user-entered constraints
+    P.extend([trproj,bproj])
+    proj = lambda w: dykstra(P,w,max_iter=1000,tol=1.0e-20)
+
+    MAX_LOOP_ITERS = 100 * n ** 2
+    MAX_BT_ITERS = 100
+
+    # projected GD loop 
+    for ii in range(MAX_LOOP_ITERS):
+        w = y - (1/L)*gy
+        prev_d = d.copy()
+        d = proj(w)
+
+        # size of step taken
+        s = d - prev_d
+        stplen = np.linalg.norm(s)
+
+        # exit condition
+        if stplen <= 1.0e-16:
+            break
+
+        # 'momentum' update
+        prev_t = t
+        t = (1 + np.sqrt(1 + 4 * t ** 2))/2
+        prev_y = y.copy()
+        y = d + s*(prev_t - 1)/t
+
+        # update gradients
+        gy += H.dot(y - prev_y)
+        gnew += H.dot(s)
+
+        # update CRVMIN
+        crv = s.dot(H).dot(s)/sumsq(s)
+        crvmin = min(crvmin, crv) if crvmin != -1.0 else crv
+
+    return d, gnew, crvmin
 
 
 def trsbox(xopt, g, H, sl, su, delta, use_fortran=USE_FORTRAN):
@@ -407,6 +474,58 @@ def ball_step(x0, g, Delta):
     else:
         return (sqrt(gdotx0**2 + gsqnorm*(Delta**2 - x0sqnorm)) - gdotx0) / gsqnorm
 
+def bbtrsbox_linear(g, a_in, b_in, P, Delta, use_fortran=USE_FORTRAN):
+    # Solve the convex program:
+    #   min_x   g' * x
+    #   s.t.   a <= x <= b
+    #           ||x||^2 <= Delta^2
+    #           P(x) = x
+
+    n = g.size
+    x = np.zeros((n,))
+    y = x.copy()
+    t = 1
+    dirn = -g
+    cons_dirns = []
+
+    # If g[i] = 0, never step along this direction
+    constant_directions = np.where(np.abs(dirn) < ZERO_THRESH)[0]
+    dirn[constant_directions] = 0.0
+
+    # trust region is a ball of radius delta centered around
+    # the origin.
+    trproj = lambda w: pball(w, np.zeros((n,)), Delta)
+
+    # the bound constraints create a box in which x must remain
+    # with upper bound b and lower bound a
+    bproj = lambda w: pbox(w, a_in, b_in)
+
+    # combine trust region constraints with user-entered constraints
+    P.extend([trproj,bproj])
+    proj = lambda w: dykstra(P,w,max_iter=1000,tol=1.0e-20)
+
+    MAX_LOOP_ITERS = 100 * n ** 2
+
+    # projected GD loop 
+    for ii in range(MAX_LOOP_ITERS):
+        w = y + dirn
+        prev_x = x.copy()
+        x = proj(w)
+
+        s = x - prev_x
+        stplen = np.linalg.norm(s)
+
+        # exit condition
+        if stplen <= 1.0e-14:
+            break
+
+        # 'momentum' update
+        prev_t = t
+        t = (1 + np.sqrt(1 + 4 * t ** 2))/2
+        prev_y = y.copy()
+        y = x + s*(prev_t - 1)/t
+
+    return x
 
 def trsbox_linear(g, a_in, b_in, Delta, use_fortran=USE_FORTRAN):
     # Solve the convex program:
@@ -466,6 +585,26 @@ def trsbox_linear(g, a_in, b_in, Delta, use_fortran=USE_FORTRAN):
             dirn[idx_hit] = 0.0  # no more searching this direction
     return x
 
+def bbtrsbox_geometry(xbase, c, g, lower, upper, P, Delta, use_fortran=USE_FORTRAN):
+    # Given a Lagrange polynomial defined by: L(x) = c + g' * (x - xbase)
+    # Maximise |L(x)| in a box + trust region - that is, solve:
+    #   max_x  abs(c + g' * (x - xbase))
+    #    s.t.  lower <= x <= upper
+    #          ||x-xbase|| <= Delta
+    #           P(xbase + s) = xbase + s
+    # Setting s = x-xbase (or x = xbase + s), this is equivalent to:
+    #   max_s  abs(c + g' * s)
+    #   s.t.   lower - xbase <= s <= upper - xbase
+    #          ||s|| <= Delta
+    #          P(xbase + s) = xbase + s
+    assert np.all(lower <= xbase + ZERO_THRESH), "xbase violates lower bound"
+    assert np.all(xbase - ZERO_THRESH <= upper), "xbase violates upper bound"
+    smin = bbtrsbox_linear(g, lower - xbase, upper - xbase, P, Delta, use_fortran=use_fortran)  # minimise g' * s
+    smax = bbtrsbox_linear(-g, lower - xbase, upper - xbase, P, Delta, use_fortran=use_fortran)  # maximise g' * s
+    if abs(c + np.dot(g, xbase + smin)) >= abs(c + np.dot(g, xbase + smax)):  # choose the one with largest absolute value
+        return xbase + smin
+    else:
+        return xbase + smax
 
 def trsbox_geometry(xbase, c, g, lower, upper, Delta, use_fortran=USE_FORTRAN):
     # Given a Lagrange polynomial defined by: L(x) = c + g' * (x - xbase)

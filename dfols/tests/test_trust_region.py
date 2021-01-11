@@ -179,9 +179,6 @@ class TestUncHardBB(unittest.TestCase):
         # Hope to get actual correct answer
         # self.assertTrue(np.all(d == true_d), 'Wrong answer')
         # self.assertAlmostEqual(est_min, true_min, 'Wrong min value')
-        print('true_d =',true_d,'(not unique)')
-        print('est_min =',est_min)
-        print('true_min =',true_min)
         s_cauchy, red_cauchy, crvmin_cauchy = cauchy_pt(g, H, Delta)
         self.assertTrue(est_min <= red_cauchy, 'Cauchy reduction not achieved')
         self.assertTrue(np.all(gnew == g + H.dot(d)), 'Wrong gnew')

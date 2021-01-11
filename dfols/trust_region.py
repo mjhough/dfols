@@ -63,7 +63,7 @@ except ImportError:
     # Fall back to Python implementation
     USE_FORTRAN = False
 
-from .util import dykstra, model_value, pball, pbox, sumsq
+from .util import dykstra, pball, pbox, sumsq
 
 __all__ = ['bbtrsbox', 'bbtrsbox_geometry', 'trsbox', 'trsbox_geometry']
 

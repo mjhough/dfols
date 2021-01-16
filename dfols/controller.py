@@ -92,13 +92,13 @@ class ExitInformation(object):
 
 
 class Controller(object):
-    def __init__(self, objfun, args, x0, r0, r0_nsamples, xl, xu, npt, rhobeg, rhoend, nf, nx, maxfun, params,
+    def __init__(self, objfun, args, x0, r0, r0_nsamples, xl, xu, projections, npt, rhobeg, rhoend, nf, nx, maxfun, params,
                  scaling_changes, do_logging):
         self.do_logging = do_logging
         self.objfun = objfun
         self.args = args
         self.maxfun = maxfun
-        self.model = Model(npt, x0, r0, xl, xu, r0_nsamples, precondition=params("interpolation.precondition"),
+        self.model = Model(npt, x0, r0, xl, xu, projections, r0_nsamples, precondition=params("interpolation.precondition"),
                            abs_tol = params("model.abs_tol"), rel_tol = params("model.rel_tol"), do_logging=do_logging)
         self.nf = nf
         self.nx = nx
@@ -331,7 +331,10 @@ class Controller(object):
     def trust_region_step(self):
         # Build model for full least squares objectives
         gopt, H = self.model.build_full_model()
-        d, gnew, crvmin = trsbox(self.model.xopt(), gopt, H, self.model.sl, self.model.su, self.delta)
+        if self.model.projections:
+            d, gnew, crvmin = bbtrsbox(self.model.xopt(), gopt, H, self.model.sl, self.model.su, self.model.projections, self.delta)
+        else:
+            d, gnew, crvmin = trsbox(self.model.xopt(), gopt, H, self.model.sl, self.model.su, self.delta)
         return d, gopt, H, gnew, crvmin
 
     def geometry_step(self, knew, adelt, number_of_samples, params):
@@ -341,7 +344,10 @@ class Controller(object):
             c, g = self.model.lagrange_gradient(knew)
             # c = 1.0 if knew == self.model.kopt else 0.0  # based at xopt, just like d
             # Solve problem: bounds are sl <= xnew <= su, and ||xnew-xopt|| <= adelt
-            xnew = trsbox_geometry(self.model.xopt(), c, g, np.minimum(self.model.sl, 0.0), np.maximum(self.model.su, 0.0), adelt)
+            if self.model.projections:
+                xnew = bbtrsbox_geometry(self.model.xopt(), c, g, np.minimum(self.model.sl, 0.0), np.maximum(self.model.su, 0.0), self.model.projections, adelt)
+            else:
+                xnew = trsbox_geometry(self.model.xopt(), c, g, np.minimum(self.model.sl, 0.0), np.maximum(self.model.su, 0.0), adelt)
         except LA.LinAlgError:
             exit_info = ExitInformation(EXIT_LINALG_ERROR, "Singular matrix encountered in geometry step")
             return exit_info  # didn't fix geometry - return & quit
@@ -502,7 +508,7 @@ class Controller(object):
     def calculate_ratio(self, current_iter, rvec_list, d, gopt, H):
         exit_info = None
         f = sumsq(np.mean(rvec_list, axis=0))  # estimate actual objective value
-        pred_reduction = - model_value(gopt, H, d)
+        pred_reduction = - model_value(gopt, H, d) # negative of m since m(0) = 0
         actual_reduction = self.model.fopt() - f
         self.diffs = [abs(actual_reduction - pred_reduction), self.diffs[0], self.diffs[1]]
         if min(sqrt(sumsq(d)), self.delta) > self.rho:  # if ||d|| >= rho, successful!

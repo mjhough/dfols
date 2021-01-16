@@ -41,7 +41,7 @@ from .util import sumsq
 __all__ = ['Model']
 
 class Model(object):
-    def __init__(self, npt, x0, r0, xl, xu, r0_nsamples, n=None, m=None, abs_tol=1e-12, rel_tol=1e-20, precondition=True,
+    def __init__(self, npt, x0, r0, xl, xu, projections, r0_nsamples, n=None, m=None, abs_tol=1e-12, rel_tol=1e-20, precondition=True,
                  do_logging=True):
         if n is None:
             n = len(x0)
@@ -63,6 +63,7 @@ class Model(object):
         self.xbase = x0.copy()
         self.sl = xl - self.xbase  # lower bound w.r.t. xbase (require xpt >= sl)
         self.su = xu - self.xbase  # upper bound w.r.t. xbase (require xpt <= su)
+        self.projections = projections
         self.points = np.zeros((npt, n))  # interpolation points w.r.t. xbase
 
         # Function values

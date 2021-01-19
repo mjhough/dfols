@@ -868,7 +868,7 @@ def solve(objfun, x0, args=(), bounds=None, projections=[], npt=None, rhobeg=Non
         scaling_within_bounds = False
         warnings.warn("Ignoring scaling_within_bounds=True for unconstrained problem/1-sided bounds", RuntimeWarning)
 
-    if not projections and scaling_within_bounds:
+    if projections and scaling_within_bounds:
         scaling_within_bounds = False
         warnings.warn("Ignoring scaling_within_bounds=True for black-box constrained problem", RuntimeWarning)
 
@@ -884,6 +884,18 @@ def solve(objfun, x0, args=(), bounds=None, projections=[], npt=None, rhobeg=Non
         maxfun = min(100 * (n + 1), 1000)  # 100 gradients, capped at 1000
     if nsamples is None:
         nsamples = lambda delta, rho, iter, nruns: 1  # no averaging
+
+    # If using black-box constraints, create projection from bounds
+    if projections:
+        xlb = xl.copy()
+        xub = xu.copy()
+        bproj = lambda w: pbox(w,xlb,xub)
+        projections = projections.copy()
+        projections.append(bproj)
+
+        # since using black-box, don't constrain otherwise
+        xl = -1e20 * np.ones((n,))
+        xu = 1e20 * np.ones((n,))
 
     # Set parameters
     params = ParameterList(int(n), int(npt), int(maxfun), objfun_has_noise=objfun_has_noise)  # make sure int, not np.int
@@ -979,6 +991,13 @@ def solve(objfun, x0, args=(), bounds=None, projections=[], npt=None, rhobeg=Non
         results = OptimResults(None, None, None, None, 0, 0, 0, exit_flag, exit_msg)
         return results
 
+    # Enforce black-box bounds on x0
+    if projections:
+        xp = dykstra(projections,x0)
+        if not np.allclose(xp,x0):
+            warnings.warn("x0 not in black-box bounds, adjusting", RuntimeWarning)
+            x0 = xp.copy()
+
     # Enforce lower & upper bounds on x0
     idx = (x0 <= xl)
     if np.any(idx):
@@ -989,13 +1008,6 @@ def solve(objfun, x0, args=(), bounds=None, projections=[], npt=None, rhobeg=Non
     if np.any(idx):
         warnings.warn("x0 above upper bound, adjusting", RuntimeWarning)
     x0[idx] = xu[idx]
-
-    # Enforce black-box bounds on x0
-    if projections:
-        xp = dykstra(projections,x0)
-        if not np.allclose(xp,x0):
-            warnings.warn("x0 not in black-box bounds, adjusting", RuntimeWarning)
-            x0 = xp.copy()
 
     # Call main solver (first time)
     diagnostic_info = DiagnosticInfo()

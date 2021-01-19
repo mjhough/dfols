@@ -36,7 +36,7 @@ import numpy as np
 import scipy.linalg as LA
 
 from .trust_region import trsbox_geometry
-from .util import sumsq
+from .util import sumsq, dykstra
 
 __all__ = ['Model']
 
@@ -124,7 +124,10 @@ class Model(object):
             return np.minimum(np.maximum(self.sl, self.points[k, :].copy()), self.su)
         else:
             # Apply bounds and convert back to absolute coordinates
-            return self.xbase + np.minimum(np.maximum(self.sl, self.points[k, :]), self.su)
+            if self.projections:
+                return dykstra(self.projections, self.xbase + self.points[k,:])
+            else:
+                return self.xbase + np.minimum(np.maximum(self.sl, self.points[k, :]), self.su)
 
     def rvec(self, k):
         assert 0 <= k < self.npt(), "Invalid index %g" % k
@@ -137,6 +140,8 @@ class Model(object):
     def as_absolute_coordinates(self, x):
         # If x were an interpolation point, get the absolute coordinates of x
         return self.xbase + np.minimum(np.maximum(self.sl, x), self.su)
+        # TODO: modify to include projections. If projections do
+        # return dykstra(self.projections, self.xbase + x)
 
     def xpt_directions(self, include_kopt=True):
         if include_kopt:
@@ -363,7 +368,7 @@ class Model(object):
 
     def build_full_model(self):
         # Build full least squares objective model from mini-models
-        # Centred around xopt
+        # Centred around xopt # TODO: note. taylor series around xopt. But sometimes need x true
         r = self.model_const + np.dot(self.model_jac, self.xopt())  # constant term (for inexact interpolation)
         J = self.model_jac
 
@@ -387,7 +392,7 @@ class Model(object):
         if k is not None:
             c = soln[0]
             g = soln[1:]
-            return c, g  # constant, gradient [all based at xopt]
+            return c, g  # constant, gradient [all based at xopt] # change everywhere see x => x - xopt. Actually, maybe not. Review.
         else:
             cs = soln[0, :]
             gs = soln[1:, :]

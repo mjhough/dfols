@@ -332,7 +332,7 @@ class Controller(object):
         # Build model for full least squares objectives
         gopt, H = self.model.build_full_model()
         if self.model.projections:
-            d, gnew, crvmin = bbtrsbox(self.model.xopt(), gopt, H, self.model.sl, self.model.su, self.model.projections, self.delta)
+            d, gnew, crvmin = bbtrsbox(self.model.xopt(abs_coordinates=True), gopt, H, self.model.projections, self.delta)
         else:
             d, gnew, crvmin = trsbox(self.model.xopt(), gopt, H, self.model.sl, self.model.su, self.delta)
         return d, gopt, H, gnew, crvmin
@@ -341,11 +341,12 @@ class Controller(object):
         if self.do_logging:
             logging.debug("Running geometry-fixing step")
         try:
+            # TODO: print(c,g), bounds etc
             c, g = self.model.lagrange_gradient(knew)
             # c = 1.0 if knew == self.model.kopt else 0.0  # based at xopt, just like d
             # Solve problem: bounds are sl <= xnew <= su, and ||xnew-xopt|| <= adelt
             if self.model.projections:
-                xnew = bbtrsbox_geometry(self.model.xopt(), c, g, np.minimum(self.model.sl, 0.0), np.maximum(self.model.su, 0.0), self.model.projections, adelt)
+                xnew = bbtrsbox_geometry(self.model.xopt(abs_coordinates=True), c, g, self.model.projections, adelt)
             else:
                 xnew = trsbox_geometry(self.model.xopt(), c, g, np.minimum(self.model.sl, 0.0), np.maximum(self.model.su, 0.0), adelt)
         except LA.LinAlgError:

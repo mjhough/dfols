@@ -69,18 +69,13 @@ __all__ = ['bbtrsbox', 'bbtrsbox_geometry', 'trsbox', 'trsbox_geometry']
 
 ZERO_THRESH = 1e-14
 
-
-def bbtrsbox(xopt, g, H, sl, su, projections, delta, use_fortran=USE_FORTRAN):
+def bbtrsbox(xopt, g, H, projections, delta, use_fortran=USE_FORTRAN):
     n = xopt.size
     assert xopt.shape == (n,), "xopt has wrong shape (should be vector)"
     assert g.shape == (n,), "g and xopt have incompatible sizes"
     assert len(H.shape) == 2, "H must be a matrix"
     assert H.shape == (n,n), "H and xopt have incompatible sizes"
     assert np.allclose(H, H.T), "H must be symmetric"
-    assert sl.shape == (n,), "sl and xopt have incompatible sizes"
-    assert su.shape == (n,), "su and xopt have incompatible sizes"
-    assert np.all(sl <= xopt), "xopt violates lower bound sl"
-    assert np.all(xopt <= su), "xopt violates upper bound su"
     assert delta > 0.0, "delta must be strictly positive"
 
     d = np.zeros((n,))
@@ -94,16 +89,12 @@ def bbtrsbox(xopt, g, H, sl, su, projections, delta, use_fortran=USE_FORTRAN):
     # Initial guess of L with matrix 2-norm
     L = np.linalg.norm(H, 2)
 
-    # trust region is a ball of radius delta around d
+    # trust region is a ball of radius delta around xopt
     trproj = lambda w: pball(w, xopt, delta)
-
-    # the bound constraints create a box around xopt+d
-    # with upper bound su and lower bound sl
-    bproj = lambda w: pbox(w, sl, su)
 
     # combine trust region constraints with user-entered constraints
     P = projections.copy()
-    P.extend([trproj,bproj])
+    P.append(trproj)
     def proj(d0):
         p = dykstra(P,xopt+d0)
         # we want the step only, i.e. d. So we subtract xopt
@@ -115,22 +106,6 @@ def bbtrsbox(xopt, g, H, sl, su, projections, delta, use_fortran=USE_FORTRAN):
 
     # projected GD loop 
     for ii in range(MAX_LOOP_ITERS):
-
-        # backtracking update loop
-        #  fd = model_value(gnew,H,d)
-        #  quad = model_value(gy,H,y) + gy.dot(d - y) + (L/2)*np.linalg.norm(d - y)**2
-        #  for jj in range(MAX_BT_ITERS):
-        #      # exit condition
-        #      if (fd <= quad):
-        #          break
-
-        #      L = eta*L
-
-        #      z = proj(y - (1/L)*gy)
-        #      gz = g + H.dot(z) # gradient at z, since H is at 0
-        #      fd = model_value(gz,H,z)
-        #      quad = model_value(gy,H,y) + gy.dot(z - y) + (L/2)*np.linalg.norm(z - y)**2
-        # end backtracking update loop
 
         w = y - (1/L)*gy
         prev_d = d.copy()
@@ -496,7 +471,7 @@ def ball_step(x0, g, Delta):
     else:
         return (sqrt(gdotx0**2 + gsqnorm*(Delta**2 - x0sqnorm)) - gdotx0) / gsqnorm
 
-def bbtrsbox_linear(g, a_in, b_in, projections, Delta, use_fortran=USE_FORTRAN):
+def bbtrsbox_linear(g, projections, Delta, use_fortran=USE_FORTRAN):
     # Solve the convex program:
     #   min_x   g' * x
     #   s.t.   a <= x <= b
@@ -514,18 +489,13 @@ def bbtrsbox_linear(g, a_in, b_in, projections, Delta, use_fortran=USE_FORTRAN):
     constant_directions = np.where(np.abs(dirn) < ZERO_THRESH)[0]
     dirn[constant_directions] = 0.0
 
-    # trust region is a ball of radius delta centered around
-    # the origin.
+    # trust region is a ball of radius delta centered around x=0
     trproj = lambda w: pball(w, np.zeros((n,)), Delta)
-
-    # the bound constraints create a box in which x must remain
-    # with upper bound b and lower bound a
-    bproj = lambda w: pbox(w, a_in, b_in)
 
     # combine trust region constraints with user-entered constraints
     P = projections.copy()
-    P.extend([trproj,bproj])
-    proj = lambda w: dykstra(P,w,max_iter=1000,tol=1.0e-20)
+    P.append(trproj)
+    proj = lambda w: dykstra(P,w)
 
     MAX_LOOP_ITERS = 100 * n ** 2
 
@@ -608,8 +578,9 @@ def trsbox_linear(g, a_in, b_in, Delta, use_fortran=USE_FORTRAN):
             dirn[idx_hit] = 0.0  # no more searching this direction
     return x
 
-def bbtrsbox_geometry(xbase, c, g, lower, upper, projections, Delta, use_fortran=USE_FORTRAN):
+def bbtrsbox_geometry(xbase, c, g, projections, Delta, use_fortran=USE_FORTRAN):
     # Given a Lagrange polynomial defined by: L(x) = c + g' * (x - xbase)
+    # TODO: DIFF for new method
     # Maximise |L(x)| in a box + trust region - that is, solve:
     #   max_x  abs(c + g' * (x - xbase))
     #    s.t.  lower <= x <= upper
@@ -620,10 +591,10 @@ def bbtrsbox_geometry(xbase, c, g, lower, upper, projections, Delta, use_fortran
     #   s.t.   lower - xbase <= s <= upper - xbase
     #          ||s|| <= Delta
     #          P(xbase + s) = xbase + s
-    assert np.all(lower <= xbase + ZERO_THRESH), "xbase violates lower bound"
-    assert np.all(xbase - ZERO_THRESH <= upper), "xbase violates upper bound"
-    smin = bbtrsbox_linear(g, lower - xbase, upper - xbase, projections, Delta, use_fortran=use_fortran)  # minimise g' * s
-    smax = bbtrsbox_linear(-g, lower - xbase, upper - xbase, projections, Delta, use_fortran=use_fortran)  # maximise g' * s
+    #  assert np.all(lower <= xbase + ZERO_THRESH), "xbase violates lower bound"
+    #  assert np.all(xbase - ZERO_THRESH <= upper), "xbase violates upper bound"
+    smin = bbtrsbox_linear(g, projections, Delta, use_fortran=use_fortran)  # minimise g' * s
+    smax = bbtrsbox_linear(-g, projections, Delta, use_fortran=use_fortran)  # maximise g' * s
     if abs(c + np.dot(g, xbase + smin)) >= abs(c + np.dot(g, xbase + smax)):  # choose the one with largest absolute value
         return xbase + smin
     else:

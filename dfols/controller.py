@@ -39,6 +39,9 @@ from .model import *
 from .trust_region import *
 from .util import *
 
+# temp
+import pdb
+
 __all__ = ['Controller', 'ExitInformation', 'EXIT_SLOW_WARNING', 'EXIT_MAXFUN_WARNING', 'EXIT_SUCCESS',
            'EXIT_INPUT_ERROR', 'EXIT_TR_INCREASE_ERROR', 'EXIT_LINALG_ERROR', 'EXIT_FALSE_SUCCESS_WARNING',
            'EXIT_AUTO_DETECT_RESTART_WARNING']
@@ -140,8 +143,19 @@ class Controller(object):
         assert self.model.num_pts <= (self.n() + 1) * (self.n() + 2) // 2, "prelim: must have npt <= (n+1)(n+2)/2"
         assert 1 <= num_directions < self.model.num_pts, "Initialisation: must have 1 <= ndirs_initial < npt"
 
-        at_lower_boundary = (self.model.sl > -0.01 * self.delta)  # sl = xl - x0, should be -ve, actually < -rhobeg
-        at_upper_boundary = (self.model.su < 0.01 * self.delta)  # su = xu - x0, should be +ve, actually > rhobeg
+        # Set flags if xbase is near the constraint boundary
+        if self.model.projections:
+            # Move 0.01*delta away from xbase in either direction and then project back onto the constraint set.
+            # If after moving 0.01*delta the projection moved the point in the negative direction to the constraint set,
+            # then xbase must have been at the upper boundary. If after moving -0.01*delta the projection moved the point in the
+            # positive direction to the constraint set, then xbase must have been at the lower boundary.
+            xabove = dykstra(self.model.projections, self.model.xbase + 0.01 * self.delta) - (self.model.xbase + 0.01 * self.delta)
+            xbelow = dykstra(self.model.projections, self.model.xbase - 0.01 * self.delta) - (self.model.xbase - 0.01 * self.delta)
+            at_lower_boundary = (xbelow > 1.0e-14)
+            at_upper_boundary = (xabove < -1.0e-14)
+        else:
+            at_lower_boundary = (self.model.sl > -0.01 * self.delta)  # sl = xl - x0, should be -ve, actually < -rhobeg
+            at_upper_boundary = (self.model.su < 0.01 * self.delta)  # su = xu - x0, should be +ve, actually > rhobeg
 
         xpts_added = np.zeros((num_directions + 1, self.n()))
         for k in range(1, num_directions + 1):
@@ -150,6 +164,7 @@ class Controller(object):
             # k = 2n+1, ..., (n+1)(n+2)/2 --> off-diagonal directions
             if 1 <= k < self.n() + 1:  # first step along coord directions
                 dirn = k - 1  # direction to move in (0,...,n-1)
+                # NOTE: This at_upper_boundary[dirn] check is not being triggered. So not set to negative.
                 stepa = self.delta if not at_upper_boundary[dirn] else -self.delta
                 stepb = None
                 xpts_added[k, dirn] = stepa
@@ -180,6 +195,15 @@ class Controller(object):
                 xpts_added[k, q - 1] = xpts_added[q, q - 1]
 
             # Evaluate objective at this new point
+            # NOTE: This as_abs_coords is what is causing issues
+            # With Dykstra projection:
+            # xbase = [-1.2 ,  0.85]
+            # x before: [0.12 0.  ], x after: [-1.08  0.85] first time through
+            # x before: [0.   0.12], x after: [-1.2   0.85] second time through
+            # Without Dykstra projection:
+            # x before: [0.12 0.  ], x after: [-1.08  0.85] first time through
+            # x before: [0.   -0.12], x after: [-1.2   0.73] second time through
+            # Why does the non-Dykstra projection one get -0.12 and not 0.12?
             x = self.model.as_absolute_coordinates(xpts_added[k, :])
             rvec_list, f_list, num_samples_run, exit_info = self.evaluate_objective(x, number_of_samples, params)
 
@@ -191,6 +215,7 @@ class Controller(object):
                 return exit_info  # return & quit
 
             # Otherwise, add new results (increments model.npt_so_far)
+            # NOTE: change_point is where fval_v is set - causes error
             self.model.change_point(k, x - self.model.xbase, rvec_list[0, :])  # expect step, not absolute x
             for i in range(1, num_samples_run):
                 self.model.add_new_sample(k, rvec_extra=rvec_list[i, :])
@@ -341,14 +366,18 @@ class Controller(object):
         if self.do_logging:
             logging.debug("Running geometry-fixing step")
         try:
-            # TODO: print(c,g), bounds etc
             c, g = self.model.lagrange_gradient(knew)
             # c = 1.0 if knew == self.model.kopt else 0.0  # based at xopt, just like d
-            # Solve problem: bounds are sl <= xnew <= su, and ||xnew-xopt|| <= adelt
             if self.model.projections:
-                xnew = bbtrsbox_geometry(self.model.xopt(abs_coordinates=True), c, g, self.model.projections, adelt)
+                # Solve problem: use black-box bounds, and ||xnew-xopt|| <= adelt
+                step = bbtrsbox_geometry(self.model.xopt(abs_coordinates=True), c, g, self.model.projections, adelt)
+                xnew = self.model.xopt() + step
+                #  xnew = xnew_abs - self.model.xbase # convert to relative coordinates
+                #  print("Geo:", xnew)
             else:
+                # Solve problem: bounds are sl <= xnew <= su, and ||xnew-xopt|| <= adelt
                 xnew = trsbox_geometry(self.model.xopt(), c, g, np.minimum(self.model.sl, 0.0), np.maximum(self.model.su, 0.0), adelt)
+                #  print("Geo:", xnew)
         except LA.LinAlgError:
             exit_info = ExitInformation(EXIT_LINALG_ERROR, "Singular matrix encountered in geometry step")
             return exit_info  # didn't fix geometry - return & quit

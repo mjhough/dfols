@@ -106,7 +106,6 @@ def bbtrsbox(xopt, g, H, projections, delta, use_fortran=USE_FORTRAN):
 
     # projected GD loop 
     for ii in range(MAX_LOOP_ITERS):
-
         w = y - (1/L)*gy
         prev_d = d.copy()
         d = proj(w)
@@ -116,7 +115,7 @@ def bbtrsbox(xopt, g, H, projections, delta, use_fortran=USE_FORTRAN):
         stplen = np.linalg.norm(s)
 
         # exit condition
-        if stplen <= 1.0e-20:
+        if stplen <= 1.0e-12:
             break
 
         # 'momentum' update
@@ -471,16 +470,15 @@ def ball_step(x0, g, Delta):
     else:
         return (sqrt(gdotx0**2 + gsqnorm*(Delta**2 - x0sqnorm)) - gdotx0) / gsqnorm
 
-def bbtrsbox_linear(g, projections, Delta, use_fortran=USE_FORTRAN):
+def bbtrsbox_linear(xbase, g, projections, Delta, use_fortran=USE_FORTRAN):
     # Solve the convex program:
-    #   min_x   g' * x
-    #   s.t.   a <= x <= b
-    #           ||x||^2 <= Delta^2
-    #           P(x) = x
+    #   min_d   g' * d
+    #   s.t.    xbase + d is in the black-box constraint set
+    #           ||d||^2 <= Delta^2
 
     n = g.size
-    x = np.zeros((n,))
-    y = x.copy()
+    d = np.zeros((n,))
+    y = d.copy()
     t = 1
     dirn = -g
     cons_dirns = []
@@ -489,36 +487,40 @@ def bbtrsbox_linear(g, projections, Delta, use_fortran=USE_FORTRAN):
     constant_directions = np.where(np.abs(dirn) < ZERO_THRESH)[0]
     dirn[constant_directions] = 0.0
 
-    # trust region is a ball of radius delta centered around x=0
-    trproj = lambda w: pball(w, np.zeros((n,)), Delta)
+    # trust region is a ball of radius delta centered around xbase
+    trproj = lambda w: pball(w, xbase, Delta)
 
     # combine trust region constraints with user-entered constraints
     P = projections.copy()
     P.append(trproj)
-    proj = lambda w: dykstra(P,w)
+    def proj(d0):
+        p = dykstra(P, xbase + d0)
+        # we want the step only, i.e. d. So we subtract
+        # xbase from the new point: proj(xk + d) - xk
+        return p - xbase
 
     MAX_LOOP_ITERS = 100 * n ** 2
 
     # projected GD loop 
     for ii in range(MAX_LOOP_ITERS):
         w = y + dirn
-        prev_x = x.copy()
-        x = proj(w)
+        prev_d = d.copy()
+        d = proj(w)
 
-        s = x - prev_x
+        s = d - prev_d
         stplen = np.linalg.norm(s)
 
         # exit condition
-        if stplen <= 1.0e-14:
+        if stplen <= 1.0e-12:
             break
 
         # 'momentum' update
         prev_t = t
         t = (1 + np.sqrt(1 + 4 * t ** 2))/2
         prev_y = y.copy()
-        y = x + s*(prev_t - 1)/t
+        y = d + s*(prev_t - 1)/t
 
-    return x
+    return d
 
 def trsbox_linear(g, a_in, b_in, Delta, use_fortran=USE_FORTRAN):
     # Solve the convex program:
@@ -580,25 +582,20 @@ def trsbox_linear(g, a_in, b_in, Delta, use_fortran=USE_FORTRAN):
 
 def bbtrsbox_geometry(xbase, c, g, projections, Delta, use_fortran=USE_FORTRAN):
     # Given a Lagrange polynomial defined by: L(x) = c + g' * (x - xbase)
-    # TODO: DIFF for new method
     # Maximise |L(x)| in a box + trust region - that is, solve:
     #   max_x  abs(c + g' * (x - xbase))
-    #    s.t.  lower <= x <= upper
+    #    s.t.  x is in the black-box constraint set
     #          ||x-xbase|| <= Delta
-    #           P(xbase + s) = xbase + s
     # Setting s = x-xbase (or x = xbase + s), this is equivalent to:
     #   max_s  abs(c + g' * s)
-    #   s.t.   lower - xbase <= s <= upper - xbase
+    #   s.t.   xbase + s is in the black-box constraint set
     #          ||s|| <= Delta
-    #          P(xbase + s) = xbase + s
-    #  assert np.all(lower <= xbase + ZERO_THRESH), "xbase violates lower bound"
-    #  assert np.all(xbase - ZERO_THRESH <= upper), "xbase violates upper bound"
-    smin = bbtrsbox_linear(g, projections, Delta, use_fortran=use_fortran)  # minimise g' * s
-    smax = bbtrsbox_linear(-g, projections, Delta, use_fortran=use_fortran)  # maximise g' * s
-    if abs(c + np.dot(g, xbase + smin)) >= abs(c + np.dot(g, xbase + smax)):  # choose the one with largest absolute value
-        return xbase + smin
+    smin = bbtrsbox_linear(xbase, g, projections, Delta, use_fortran=use_fortran)  # minimise g' * s
+    smax = bbtrsbox_linear(xbase, -g, projections, Delta, use_fortran=use_fortran)  # maximise g' * s
+    if abs(c + np.dot(g, smin)) >= abs(c + np.dot(g, smax)):  # choose the one with largest absolute value
+        return smin
     else:
-        return xbase + smax
+        return smax
 
 def trsbox_geometry(xbase, c, g, lower, upper, Delta, use_fortran=USE_FORTRAN):
     # Given a Lagrange polynomial defined by: L(x) = c + g' * (x - xbase)

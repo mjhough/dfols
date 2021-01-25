@@ -208,7 +208,7 @@ def remove_scaling(x_scaled, scaling_changes):
     return shift + x_scaled * scale
 
 
-def dykstra(P,x0,max_iter=1000,tol=1.0e-20):
+def dykstra(P,x0,max_iter=100,tol=1.0e-10):
     x = x0.copy()
     p = len(P)
     y = np.zeros((p,x0.shape[0]))

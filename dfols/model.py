@@ -126,8 +126,7 @@ class Model(object):
             # Apply bounds and convert back to absolute coordinates
             if self.projections:
                 return dykstra(self.projections, self.xbase + self.points[k,:])
-            else:
-                return self.xbase + np.minimum(np.maximum(self.sl, self.points[k, :]), self.su)
+            return self.xbase + np.minimum(np.maximum(self.sl, self.points[k, :]), self.su)
 
     def rvec(self, k):
         assert 0 <= k < self.npt(), "Invalid index %g" % k
@@ -139,9 +138,9 @@ class Model(object):
 
     def as_absolute_coordinates(self, x):
         # If x were an interpolation point, get the absolute coordinates of x
+        if self.projections:
+            return dykstra(self.projections, self.xbase + x)
         return self.xbase + np.minimum(np.maximum(self.sl, x), self.su)
-        # TODO: modify to include projections. If projections do
-        # return dykstra(self.projections, self.xbase + x)
 
     def xpt_directions(self, include_kopt=True):
         if include_kopt:

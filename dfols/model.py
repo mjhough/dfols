@@ -367,7 +367,7 @@ class Model(object):
 
     def build_full_model(self):
         # Build full least squares objective model from mini-models
-        # Centred around xopt # TODO: note. taylor series around xopt. But sometimes need x true
+        # Centred around xopt
         r = self.model_const + np.dot(self.model_jac, self.xopt())  # constant term (for inexact interpolation)
         J = self.model_jac
 
@@ -391,7 +391,7 @@ class Model(object):
         if k is not None:
             c = soln[0]
             g = soln[1:]
-            return c, g  # constant, gradient [all based at xopt] # change everywhere see x => x - xopt. Actually, maybe not. Review.
+            return c, g  # constant, gradient [all based at xopt]
         else:
             cs = soln[0, :]
             gs = soln[1:, :]

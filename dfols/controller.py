@@ -358,12 +358,9 @@ class Controller(object):
                 # Solve problem: use black-box bounds, and ||xnew-xopt|| <= adelt
                 step = bbtrsbox_geometry(self.model.xopt(abs_coordinates=True), c, g, self.model.projections, adelt)
                 xnew = self.model.xopt() + step
-                #  xnew = xnew_abs - self.model.xbase # convert to relative coordinates
-                #  print("Geo:", xnew)
             else:
                 # Solve problem: bounds are sl <= xnew <= su, and ||xnew-xopt|| <= adelt
                 xnew = trsbox_geometry(self.model.xopt(), c, g, np.minimum(self.model.sl, 0.0), np.maximum(self.model.su, 0.0), adelt)
-                #  print("Geo:", xnew)
         except LA.LinAlgError:
             exit_info = ExitInformation(EXIT_LINALG_ERROR, "Singular matrix encountered in geometry step")
             return exit_info  # didn't fix geometry - return & quit
